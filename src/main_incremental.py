@@ -17,22 +17,6 @@ from networks import tvmodels, allmodels, set_tvmodel_head_var
 
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-import moxing as mox
-
-# ---------------------------------------------------------------------------------------------------
-# Add by NieX for showing parameters in 10_12. 
-def log_model_info(model, verbose=False):
-    """Logs model info"""
-    if verbose:
-        logger.info(f"Classification Model:\n{model}")
-    model_total_params = sum(p.numel() for p in model.parameters())
-    model_grad_params = sum(
-        p.numel() for p in model.parameters() if p.requires_grad)
-    print("Total Parameters: {0}\t Gradient Parameters: {1}".format(
-        model_total_params, model_grad_params))
-    # print("tuned percent:%.3f"%(model_grad_params/model_total_params*100))
-# ---------------------------------------------------------------------------------------------------
-
 def main(argv=None):
     tstart = time.time()
     # Arguments
@@ -42,11 +26,8 @@ def main(argv=None):
     parser.add_argument('--gpu', type=int, default=0,
                         help='GPU (default=%(default)s)')
     # ---------------------------------------------------------------------------------------
-    # Add by NieX.
-    # parser.add_argument('--results-path', type=str, default='../results',
-                            # help='Results path (default=%(default)s)')
-    parser.add_argument('--results-path', type=str, default='/cache/results',
-                        help='Results path (default=%(default)s)')
+    parser.add_argument('--results-path', type=str, default='../results',
+                            help='Results path (default=%(default)s)')
     # ---------------------------------------------------------------------------------------
     parser.add_argument('--ablation-name', type=str, default='',
                         help='ablation study results')
@@ -97,7 +78,7 @@ def main(argv=None):
                         help='whether to synchronize batch norm')
 
     # training args
-    parser.add_argument('--approach', default='lucir', type=str,
+    parser.add_argument('--approach', default='lucir_wo_reservoir', type=str,
                         help='Learning approach used (default=%(default)s)', metavar="APPROACH")
     parser.add_argument('--nepochs', default=200, type=int, required=False,
                         help='Number of epochs per training session (default=%(default)s)')
@@ -129,13 +110,6 @@ def main(argv=None):
     parser.add_argument('--resume-path', type=str, default='',
                         help='the path to resume from')
     # -----------------------------------------------------------------------------------------------------------------
-    # Add for Decom by NieX.
-    parser.add_argument('--buffer-size', default=2000, type=int, required=True,
-                        help='The size of the memory buffer.')
-    parser.add_argument('--minibatch-size-1', default=32, type=int, required=True,
-                        help='The size of the minibatch of the memory buffer for branch1.')
-    parser.add_argument('--minibatch-size-2', default=32, type=int, required=True,
-                        help='The size of the minibatch of the memory buffer for branch2.')
     parser.add_argument('--l-alpha', default=1.0, type=float, required=True,
                         help='The weight of the 1-rd branch in loss.')
     parser.add_argument('--l-beta', default=1.0, type=float, required=True,
@@ -144,16 +118,10 @@ def main(argv=None):
                         help='The weight of the distill loss.')
     # -----------------------------------------------------------------------------------------------------------------
 
-    # Mox args
-    parser.add_argument('--data_url', help='data path')
-    parser.add_argument('--train_url', help='results path')
-    parser.add_argument('--mox_data_url', default='/cache/dataset', type=str, help='mox data path')
-
     # Args -- Incremental Learning Framework
     args, extra_args = parser.parse_known_args(argv)
 
     # ----------------------------------------------------------------------------------------------------------
-    # Add by NieX. '{}'.format(args.data_url)
     args.exp_name = 'nc_first_{}_ntask_{}'.format(args.nc_first_task, args.num_tasks)
     if args.datasets[0] == 'cifar100_icarl':
         args.decay_mile_stone = [80, 120]
@@ -171,48 +139,7 @@ def main(argv=None):
                        wu_lr_factor=args.warmup_lr_factor, fix_bn=args.fix_bn, eval_on_train=args.eval_on_train,
                        ddp=args.ddp, local_rank=args.local_rank)
 
-    # --------------------------------------------------------------------------------------------------------------
-    # Add by NieX.
-    if args.resume_task != -1:
-        mox.file.make_dirs('/cache/task1_model')
-        print('Copy task 1 model to cache ...')
-        mox.file.copy_parallel('s3://bucket-6643/niexing/output/C_C1z_Bic_Decom_Distill_det_br1_C3_1st128in_exe_A1G1/cifar100_icarl_bic_nc_first_50_ntask_6/models', '/cache/task1_model')
-    # --------------------------------------------------------------------------------------------------------------
 
-
-    #-----------------------------------------------------------------------------------------------------------------
-    # Add Dataset mox by NieX.
-    if not os.path.exists(args.mox_data_url):
-        mox.file.make_dirs(args.mox_data_url)
-    if args.datasets == ['imagenet_100'] or args.datasets == ['imagenet_1000']:
-        print('Copy imagenet to cache ...')
-        if not mox.file.exists(os.path.join(args.mox_data_url, 'imagenet')):
-            mox.file.copy(os.path.join(args.data_url, 'imagenet.tar'), os.path.join(args.mox_data_url, 'imagenet') + '.tar')
-            cmd = 'cd /cache/dataset && tar -xf /cache/dataset/imagenet.tar'
-            os.system(cmd)
-            mox.file.copy(os.path.join(args.data_url, 'train_100.txt'), os.path.join(args.mox_data_url, 'imagenet/train_100.txt'))
-            mox.file.copy(os.path.join(args.data_url, 'val_100.txt'), os.path.join(args.mox_data_url, 'imagenet/val_100.txt'))
-            mox.file.copy(os.path.join(args.data_url, 'train_1000.txt'), os.path.join(args.mox_data_url, 'imagenet/train_1000.txt'))
-            mox.file.copy(os.path.join(args.data_url, 'val_1000.txt'), os.path.join(args.mox_data_url, 'imagenet/val_1000.txt'))
-            #if not mox.file.exists(os.path.join(args.mox_data_url, 'imagenet/train_100')):
-                #mox.file.copy(os.path.join(args.data_url, 'train_100.txt'), os.path.join(args.mox_data_url, 'imagenet/train_100') + '.txt')
-            # mox.file.copy_parallel(os.path.join(args.data_url, 'train_100.txt'), args.mox_data_url)
-        else:
-            mox.file.copy_parallel(args.data_url, args.mox_data_url)
-    elif args.datasets == ['cifar100_icarl']:
-        print('Copy cifar100 to cache ...')
-        mox.file.copy_parallel('{}'.format(args.data_url), args.mox_data_url)
-    else:
-        print('Copy failed. Dataset type is wrong!')
-    #-----------------------------------------------------------------------------------------------------------------
-
-    #-----------------------------------------------------------------------------------------------------------------
-    # Add Result mox by NieX.
-    if not os.path.exists('/cache/results'):
-        print('create /cache/results ...')
-        mox.file.make_dirs('/cache/results')
-        
-    #-----------------------------------------------------------------------------------------------------------------
 
     if args.no_cudnn_deterministic:
         print('WARNING: CUDNN Deterministic will be disabled.')
@@ -276,8 +203,6 @@ def main(argv=None):
     else:
         appr_exemplars_dataset_args = argparse.Namespace()
 
-    # import pdb
-    # pdb.set_trace()
 
     assert len(extra_args) == 0, "Unused args: {}".format(' '.join(extra_args))
     ####################################################################################################################
@@ -287,15 +212,6 @@ def main(argv=None):
     full_exp_name += '_' + args.approach
     if args.exp_name is not None:
         full_exp_name += '_' + args.exp_name
-
-    # ------------------------------------------------------------------------------------------------------------------
-    # Add by NieX.
-    mox.file.make_dirs(os.path.join('/cache/results', full_exp_name))
-    mox.file.make_dirs(os.path.join('/cache/results', os.path.join(full_exp_name, 'results')))
-    mox.file.make_dirs(os.path.join('/cache/results', os.path.join(full_exp_name, 'models')))
-    logger = MultiLogger(args.results_path, full_exp_name, loggers=args.log, save_models=args.save_models)
-    logger.log_args(argparse.Namespace(**args.__dict__, **appr_args.__dict__, **appr_exemplars_dataset_args.__dict__))
-    # ------------------------------------------------------------------------------------------------------------------
 
     logger = MultiLogger(args.results_path, full_exp_name, loggers=args.log, save_models=args.save_models)
     logger.log_args(argparse.Namespace(**args.__dict__, **appr_args.__dict__, **appr_exemplars_dataset_args.__dict__))
@@ -342,13 +258,7 @@ def main(argv=None):
                                                                  **appr_exemplars_dataset_args.__dict__)
     utils.seed_everything(seed=args.seed)
     # appr = Appr(net, device, **appr_kwargs)
-    appr = Appr(net, device, args.l_alpha, args.l_beta, args.l_gamma, args.buffer_size, args.minibatch_size_1, args.minibatch_size_2, args.network, **appr_kwargs)
-
-    # ---------------------------------------------------------------------------------------------------
-    # Add by NieX for showing parameters in 10_12. 
-    log_model_info(appr.model)
-    print(appr.model)
-    # ---------------------------------------------------------------------------------------------------
+    appr = Appr(net, device, args.l_alpha, args.l_beta, args.l_gamma, args.network, **appr_kwargs)
     
     utils.seed_everything(seed=args.seed)
 
@@ -452,12 +362,6 @@ def main(argv=None):
         print(cm)
         # -------------------------------------------------------
         
-        # --------------------------------------------------------------------------------------------------------------
-        # Add by NieX.
-        print('Copy results to S3 ...')
-        mox.file.copy_parallel('/cache/results', args.train_url)
-        # --------------------------------------------------------------------------------------------------------------
-
     ####################################################################################################################
 
 
