@@ -31,12 +31,12 @@ class Appr(Inc_Learning_Appr):
 
     # Sec. 4.1: "we used the method proposed in [29] based on herd selection" and "first one stores a constant number of
     # samples for each old class (e.g. R_per=20) (...) we adopt the first strategy"
-    def __init__(self, model, device, l_alpha, l_beta, l_gamma, network, nepochs=160, lr=0.1, decay_mile_stone=[80,120], lr_decay=0.1, clipgrad=10000,
+    def __init__(self, model, device, l_alpha, l_beta, l_gamma, buffer_size, minibatch_size_1, minibatch_size_2, network, nepochs=160, lr=0.1, decay_mile_stone=[80,120], lr_decay=0.1, clipgrad=10000,
                  momentum=0.9, wd=5e-4, multi_softmax=False, wu_nepochs=0, wu_lr_factor=1, fix_bn=False,
                  eval_on_train=False, ddp=False, local_rank=0, logger=None, exemplars_dataset=None,
                  lamb=5., lamb_mr=1., dist=0.5, K=2,
                  remove_less_forget=False, remove_margin_ranking=False, remove_adapt_lamda=False,
-                 first_task_lr=0.1, first_task_bz=128, bal_ft=False):
+                 first_task_lr=0.1, first_task_bz=128, bal_ft=False, mom_init=1.0):
         super(Appr, self).__init__(model, device, nepochs, lr, decay_mile_stone, lr_decay, clipgrad, momentum, wd,
                                    multi_softmax, wu_nepochs, wu_lr_factor, fix_bn, eval_on_train, ddp, local_rank,
                                    logger, exemplars_dataset)
@@ -56,6 +56,8 @@ class Appr(Inc_Learning_Appr):
         self.first_task_bz = first_task_bz
         self.bal_ft = bal_ft
 
+        self.mom_init = mom_init
+
         # LUCIR is expected to be used with exemplars. If needed to be used without exemplars, overwrite here the
         # `_get_optimizer` function with the one in LwF and update the criterion
         have_exemplars = self.exemplars_dataset.max_num_exemplars + self.exemplars_dataset.max_num_exemplars_per_class
@@ -66,6 +68,9 @@ class Appr(Inc_Learning_Appr):
         self.first_task = True
 
         # ----------------------------------------------------------------------------------------------
+        self.buffer_size = buffer_size
+        self.minibatch_size_1 = minibatch_size_1
+        self.minibatch_size_2 = minibatch_size_2
         self.l_alpha = l_alpha
         self.l_beta = l_beta
         self.l_gamma = l_gamma
@@ -105,6 +110,7 @@ class Appr(Inc_Learning_Appr):
         parser.add_argument('--first-task-lr', default=0.1, type=float)
         parser.add_argument('--first-task-bz', default=128, type=int)
         parser.add_argument('--bal-ft', action='store_true', help='whether to do class bal ft')
+        parser.add_argument('--mom-init', default=1.0, type=float)
         return parser.parse_known_args(args)
 
     # def _get_optimizer(self):
@@ -143,6 +149,7 @@ class Appr(Inc_Learning_Appr):
     def pre_train_process(self, t, trn_loader):
         """Runs before training all epochs of the task (before the train session)"""
         # ------------------------------------------------------------------------------------------------------
+        # Add for other networks by NieX.
         if self.network == 'resnet18_cifar' \
             or self.network == 'resnet18_cifar_conv1' \
             or self.network == 'resnet18_cifar_conv1_s' \
@@ -201,6 +208,7 @@ class Appr(Inc_Learning_Appr):
             elif model.model.__class__.__name__ == 'ResNetBottleneck':
                 old_block = model.model.layer4[-1]
                 # ------------------------------------------------------------------------------------------------------
+                # Add for other networks by NieX.
                 model.model.layer4[-1] = BottleneckNoRelu(old_block.conv1,
                                                           old_block.relu, old_block.conv2,
                                                           old_block.conv3, old_block.downsample)
@@ -233,6 +241,7 @@ class Appr(Inc_Learning_Appr):
         # yujun: debug to make sure this one is ok
         if self.ddp:
             # ------------------------------------------------------------------------------------------------------------------------
+            # Add for DDP by NieX.
             self.model = DDP(self.model.module, device_ids=[self.local_rank], broadcast_buffers=False, find_unused_parameters=True)
             # ------------------------------------------------------------------------------------------------------------------------
         # The original code has an option called "imprint weights" that seems to initialize the new head.
@@ -297,16 +306,26 @@ class Appr(Inc_Learning_Appr):
         self.ref_model.eval()
 
         # ------------------------------------------------------------------------------------------------------
+        # Add for dark branch by NieX.
         model_dict =  self.model.state_dict()
         model_dict_1 = {k: v for k, v in model_dict.items() if 'new_1' in k}
         model_dict_2 = {k: v for k, v in model_dict.items() if 'new_2' in k}
         # model_dict_3 = {k: v for k, v in model_dict.items() if 'new_1' not in k and 'new_2' not in k}
 
-        model_dict_1_new = OrderedDict()
-        for k, v in model_dict_1.items():
-            k_new = k.replace('new_1', 'new_2')
-            model_dict_1_new[k_new] = v
+        ###################################################################################
+        # Directly init.
+        # model_dict_1_new = OrderedDict()
+        # for k, v in model_dict_1.items():
+        #     k_new = k.replace('new_1', 'new_2')
+        #     model_dict_1_new[k_new] = v
+        ###################################################################################
 
+        model_dict_1_new = OrderedDict()
+
+        for key1, key2 in zip(model_dict_1.keys(), model_dict_2.keys()):
+            key1_new = key1.replace('new_1', 'new_2')
+            # print('self.mom_init={}'.format(self.mom_init))
+            model_dict_1_new[key1_new] = self.mom_init*model_dict_1[key1] + (1-self.mom_init)*model_dict_2[key2]
         model_dict_2.update(model_dict_1_new)
 
         self.model.load_state_dict(model_dict_2, strict=False)
@@ -382,6 +401,7 @@ class Appr(Inc_Learning_Appr):
             images, targets = images.to(self.device), targets.to(self.device)
 
             # --------------------------------------------------------------------------------------------------------------
+            # Add for Decom by NieX.
             ref_outputs = None
             ref_features = None
 
@@ -470,6 +490,109 @@ class Appr(Inc_Learning_Appr):
             loss.backward()
             self.optimizer.step()
 
+    # def train_epoch(self, t, trn_loader):
+    #     """Runs a single epoch"""
+
+    #     # ------------------------------------------------------------------------------------------
+    #     # Add for Decom by NieX.
+    #     # self.transform = transforms.Compose(
+    #     #         [transforms.RandomCrop(32, padding=4),
+    #     #          transforms.RandomHorizontalFlip(),
+    #     #          transforms.ToTensor(),
+    #     #          transforms.Normalize((0.5071, 0.4867, 0.4408),
+    #     #                               (0.2675, 0.2565, 0.2761))])
+    #     # ------------------------------------------------------------------------------------------
+
+    #     self.model.train()
+    #     if self.fix_bn and t > 0:
+    #         self.model.freeze_bn()
+    #     for images, targets in trn_loader:
+    #         images, targets = images.to(self.device), targets.to(self.device)
+
+    #         # --------------------------------------------------------------------------------------------------------------
+    #         # Add for Decom by NieX.
+    #         ref_outputs = None
+    #         ref_features = None
+
+    #         # Distill_Loss_detach
+    #         outputs, _, pod_features = self.model((images, images), return_features=True)
+    #         loss = self.l_gamma * Distill_Loss_detach()(pod_features)
+
+    #         if self.buffer.is_empty() or t == 0:
+    #             targets = torch.cat((targets, targets), dim=0)
+    #             outputs, features, _ = self.model((images, images), return_features=True)
+    #             if t > 0:
+    #                 ref_outputs, ref_features, _ = self.ref_model((images, images), return_features=True)
+
+    #         else:
+    #             buf_outputs = []
+    #             buf_inputs, buf_labels = self.buffer.get_data(self.minibatch_size, transform=None)
+    #             outputs, features, _ = self.model((images, buf_inputs), return_features=True)
+
+    #             for i in range(len(outputs)):
+    #                 # if i == 0:
+    #                 #     buf_outputs = torch.split(outputs[i]['wsigma'], split_size_or_sections=[images.shape[0], buf_inputs.shape[0]], dim=0)[1]
+    #                 # else:
+    #                 #     buf_outputs = torch.cat((buf_outputs, torch.split(outputs[i]['wsigma'], split_size_or_sections=[images.shape[0], buf_inputs.shape[0]], dim=0)[1]), dim=0)
+    #                 # buf_outputs = torch.split(outputs[i]['wsigma'], split_size_or_sections=[images.shape[0], buf_inputs.shape[0]], dim=0)[1]
+
+    #                 # buf_outputs.append(torch.split(outputs[i]['wsigma'], split_size_or_sections=[images.shape[0], buf_inputs.shape[0]], dim=0)[1])
+    #                 buf_outputs.append(outputs[i]['wsigma'][images.shape[0]:])
+
+    #                 # import pdb
+    #                 # pdb.set_trace()
+
+    #                 outputs[i]['wsigma'] = outputs[i]['wsigma'][0:images.shape[0]]
+    #                 outputs[i]['wosigma'] = outputs[i]['wosigma'][0:images.shape[0]]
+
+    #             buf_outputs = torch.cat([o for o in buf_outputs], dim=1)
+
+    #             # loss += self.args.beta * self.loss(buf_outputs, buf_labels)
+
+    #             # import pdb
+    #             # pdb.set_trace()
+
+    #             # loss += nn.CrossEntropyLoss()(buf_outputs, buf_labels)
+    #             loss = loss + self.l_beta*nn.CrossEntropyLoss()(buf_outputs, buf_labels)
+
+    #             # features, _ = torch.split(features_all, split_size_or_sections=[images.shape[0], buf_inputs.shape[0]], dim=0)
+    #             features = features[0:images.shape[0]]
+    #             if t > 0:
+    #                 ref_outputs, ref_features, _ = self.ref_model((images, images), return_features=True)
+    #                 for i in range(len(ref_outputs)):
+    #                     # import pdb
+    #                     # pdb.set_trace()
+    #                     ref_outputs[i]['wsigma'] = ref_outputs[i]['wsigma'][0:images.shape[0]]
+    #                     ref_outputs[i]['wosigma'] = ref_outputs[i]['wosigma'][0:images.shape[0]]
+    #                 # ref_features, _ = torch.split(ref_features, split_size_or_sections=[images.shape[0], buf_inputs.shape[0]], dim=0)
+    #                 ref_features = ref_features[0:images.shape[0]]
+
+    #         # add data
+    #         self.buffer.add_data(examples=images, labels=targets)
+
+
+    #         # --------------------------------------------------------------------------------------------------------------
+
+    #         # --------------------------------------------------------------------------------------------------------------
+    #         # if t > 0:
+    #         #     ref_outputs, ref_features = self.ref_model(images, return_features=True)
+
+    #         # if t > 0:
+    #         #     images_all = (images, images)
+    #         #     ref_outputs, ref_features = self.ref_model(images_all, return_features=True)
+
+    #         # --------------------------------------------------------------------------------------------------------------
+
+    #         # loss += self.criterion(t, outputs, targets, ref_outputs, features, ref_features)
+    #         loss = loss + self.l_alpha*self.criterion(t, outputs, targets, ref_outputs, features, ref_features)
+
+    #         # import pdb
+    #         # pdb.set_trace()
+
+    #         # Backward
+    #         self.optimizer.zero_grad()
+    #         loss.backward()
+    #         self.optimizer.step()
 
     def del_tensor_ele_n(arr, index):
         """
