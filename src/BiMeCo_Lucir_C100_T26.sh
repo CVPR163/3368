@@ -1,4 +1,4 @@
-mdevice_id=0
+device_id=0
 appr=lucir_wo_reservoir
 bz=128
 clipping=-1
