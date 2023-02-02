@@ -4,7 +4,7 @@ This repo contains the Implementation of CVPR 2023-ID-3368.
 
 ## 1.Instructions to Run Our Code
 
-This codebase contain experiments of our proposed BiMeCo based on [LUCIR](https://openaccess.thecvf.com/content_CVPR_2019/papers/Hou_Learning_a_Unified_Classifier_Incrementally_via_Rebalancing_CVPR_2019_paper.pdf) with CIFAR100. 
+This codebase contain experiments of our proposed BiMeCo based on [LUCIR](https://openaccess.thecvf.com/content_CVPR_2019/papers/Hou_Learning_a_Unified_Classifier_Incrementally_via_Rebalancing_CVPR_2019_paper.pdf) with CIFAR100. All experimental settings are the same as our ablation study, as listed in Table 1 and Line 616-620 in our main paper.
 
 Our BiMeCo is trained one NVIDIA Tesla V100 GPU.
 
