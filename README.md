@@ -37,7 +37,6 @@ bash BiMeCo_Lucir_C100_T11.sh
 ```
 bash BiMeCo_Lucir_C100_T26.sh
 ```
-
 ### Results
 
 We have uploaded our training logs in "log". After finishing the training process, you will get the corresponding log files. 
