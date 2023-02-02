@@ -26,4 +26,3 @@ CUDA_VISIBLE_DEVICES=$device_id python3 main_incremental.py --exp-name nc_first_
      --approach $appr --lamb $lamb \
      --num-exemplars-per-class $n_exemplar --exemplar-selection herding \
      --first-task-lr $first_task_lr --first-task-bz $first_task_bz
-
